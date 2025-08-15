@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="fr">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Minecraft Dashboard</title>
+	<script src="https://cdn.tailwindcss.com"></script>
+	<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100">
+	<div class="max-w-6xl mx-auto p-4" x-data="dashboard()" x-init="init()">
+		<header class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+			<h1 class="text-2xl font-bold">Minecraft Dashboard</h1>
+			<div class="flex flex-wrap items-center gap-2">
+				<input x-model="host" class="px-3 py-2 bg-slate-800 rounded border border-slate-700" placeholder="Host (ex: play.example.com)">
+				<input x-model.number="port" type="number" class="px-3 py-2 w-28 bg-slate-800 rounded border border-slate-700" placeholder="25565">
+				<button @click="refreshPing()" class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500">Actualiser</button>
+			</div>
+		</header>
+
+		<section class="grid md:grid-cols-3 gap-4 mb-6">
+			<div class="p-4 rounded bg-slate-800 border border-slate-700">
+				<div class="flex items-center justify-between">
+					<h2 class="font-semibold">Statut du serveur</h2>
+					<span :class="ping.online ? 'text-emerald-400' : 'text-rose-400'" class="text-sm font-medium" x-text="ping.online ? 'En ligne' : 'Hors ligne'"></span>
+				</div>
+				<p class="text-sm text-slate-400 mt-2" x-text="ping.motd"></p>
+				<div class="mt-3 text-sm grid grid-cols-2 gap-2">
+					<div>Version: <span class="text-slate-300" x-text="ping.version || '-' "></span></div>
+					<div>Joueurs: <span class="text-slate-300" x-text="(ping.players?.online ?? 0) + '/' + (ping.players?.max ?? 0)"></span></div>
+					<div class="col-span-2" x-show="(ping.players?.list?.length || 0) > 0">
+						<div class="text-slate-400">Connectés:</div>
+						<div class="flex flex-wrap gap-2 mt-1">
+							<template x-for="name in ping.players.list" :key="name">
+								<span class="px-2 py-1 bg-slate-700 rounded text-xs">@<span x-text="name"></span></span>
+							</template>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="p-4 rounded bg-slate-800 border border-slate-700 md:col-span-2">
+				<h2 class="font-semibold mb-2">Fréquentation (24h)</h2>
+				<canvas id="trafficChart" height="110"></canvas>
+			</div>
+		</section>
+
+		<section class="grid md:grid-cols-3 gap-4 mb-6">
+			<div class="p-4 rounded bg-slate-800 border border-slate-700">
+				<h2 class="font-semibold mb-2">Classement Temps de jeu</h2>
+				<ol class="text-sm space-y-1" x-html="leaderboards.playtime"></ol>
+			</div>
+			<div class="p-4 rounded bg-slate-800 border border-slate-700">
+				<h2 class="font-semibold mb-2">Classement Kills</h2>
+				<ol class="text-sm space-y-1" x-html="leaderboards.kills"></ol>
+			</div>
+			<div class="p-4 rounded bg-slate-800 border border-slate-700">
+				<h2 class="font-semibold mb-2">Classement Blocs minés</h2>
+				<ol class="text-sm space-y-1" x-html="leaderboards.mined"></ol>
+			</div>
+		</section>
+
+		<section class="p-4 rounded bg-slate-800 border border-slate-700 mb-6">
+			<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+				<h2 class="font-semibold">Statistiques par joueur</h2>
+				<input x-model="playerQuery" class="px-3 py-2 bg-slate-900 rounded border border-slate-700 w-full md:w-80" placeholder="Rechercher un pseudo">
+			</div>
+			<div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mt-4">
+				<template x-for="p in filteredPlayers()" :key="p[0]">
+					<button @click="selectPlayer(p[0])" class="text-left p-3 rounded bg-slate-900 border border-slate-700 hover:border-slate-600">
+						<div class="flex items-center gap-3">
+							<img :src="`https://mc-heads.net/avatar/${p[0]}/32`" alt="skin" class="rounded">
+							<div>
+								<div class="font-semibold" x-text="p[0]"></div>
+								<div class="text-xs text-slate-400">Playtime: <span x-text="formatPlaytime(p[1]?.playtimeSeconds || 0)"></span></div>
+							</div>
+						</div>
+					</button>
+				</template>
+			</div>
+
+			<div x-show="selectedPlayerName" x-transition class="mt-6 p-4 rounded bg-slate-900 border border-slate-700">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<img :src="`https://mc-heads.net/avatar/${selectedPlayerName}/48`" alt="skin" class="rounded">
+						<div>
+							<div class="text-lg font-semibold" x-text="selectedPlayerName"></div>
+							<div class="text-xs text-slate-400">K/D: <span x-text="kdRatio(selectedPlayer)"></span></div>
+						</div>
+					</div>
+					<button @click="selectedPlayerName=null; selectedPlayer=null;" class="px-3 py-1 text-sm rounded bg-slate-800 border border-slate-700">Fermer</button>
+				</div>
+				<div class="grid sm:grid-cols-2 gap-3 mt-4" x-show="selectedPlayer">
+					<div class="p-3 rounded bg-slate-800 border border-slate-700">
+						<div class="text-slate-400 text-xs">Temps de jeu</div>
+						<div class="text-lg font-semibold" x-text="formatPlaytime(selectedPlayer?.playtimeSeconds || 0)"></div>
+					</div>
+					<div class="p-3 rounded bg-slate-800 border border-slate-700">
+						<div class="text-slate-400 text-xs">Kills / Morts</div>
+						<div class="text-lg font-semibold" x-text="(selectedPlayer?.kills||0) + ' / ' + (selectedPlayer?.deaths||0)"></div>
+					</div>
+					<div class="p-3 rounded bg-slate-800 border border-slate-700">
+						<div class="text-slate-400 text-xs">Blocs minés / placés</div>
+						<div class="text-lg font-semibold" x-text="(selectedPlayer?.blocksMined||0) + ' / ' + (selectedPlayer?.blocksPlaced||0)"></div>
+					</div>
+					<div class="p-3 rounded bg-slate-800 border border-slate-700">
+						<div class="text-slate-400 text-xs">Distance parcourue</div>
+						<div class="text-lg font-semibold" x-text="formatDistance(selectedPlayer?.distance||0)"></div>
+					</div>
+				</div>
+
+				<div class="mt-4" x-show="selectedPlayer?.sessions?.length">
+					<h3 class="font-semibold mb-2">Historique des connexions</h3>
+					<div class="overflow-x-auto rounded border border-slate-700">
+						<table class="min-w-full text-sm">
+							<thead class="bg-slate-800 text-slate-300">
+								<tr>
+									<th class="px-3 py-2 text-left">Début</th>
+									<th class="px-3 py-2 text-left">Fin</th>
+									<th class="px-3 py-2 text-left">Durée</th>
+								</tr>
+							</thead>
+							<tbody>
+								<template x-for="s in selectedPlayer.sessions" :key="s.start">
+									<tr class="border-t border-slate-800">
+										<td class="px-3 py-2" x-text="formatDate(s.start)"></td>
+										<td class="px-3 py-2" x-text="formatDate(s.end)"></td>
+										<td class="px-3 py-2" x-text="formatPlaytime(s.durationSeconds||0)"></td>
+									</tr>
+								</template>
+							</tbody>
+						</table>
+					</div>
+				</div>
+		</section>
+
+		<section class="p-4 rounded bg-slate-800 border border-slate-700 mb-10">
+			<div class="flex items-center justify-between">
+				<h2 class="font-semibold">Importer des stats (JSON)</h2>
+				<form @submit.prevent="importStats" class="flex items-center gap-2">
+					<input type="file" x-ref="fileInput" class="text-sm" accept="application/json">
+					<button type="submit" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-sm">Importer</button>
+				</form>
+			</div>
+			<p class="text-xs text-slate-400 mt-2">Format attendu: { players: { "Pseudo": { playtimeSeconds, kills, deaths, blocksMined, blocksPlaced, distance, sessions: [] } } }</p>
+		</section>
+	</div>
+
+	<script>
+	function dashboard() {
+		return {
+			host: 'localhost',
+			port: 25565,
+			ping: { online: false, players: { online: 0, max: 0, list: [] }, motd: '' },
+			leaderboards: { playtime: '', kills: '', mined: '' },
+			trafficChart: null,
+			trafficData: [],
+			players: {},
+			playerQuery: '',
+			selectedPlayerName: null,
+			selectedPlayer: null,
+			async init() {
+				try {
+					const cfg = await fetch('/api/config').then(r => r.json());
+					this.host = cfg.host || this.host;
+					this.port = cfg.port || this.port;
+				} catch {}
+				this.refreshPing();
+				this.loadPingHistory();
+				await this.refreshLeaderboards();
+				setInterval(() => { this.refreshPing(); this.loadPingHistory(); }, 15000);
+			},
+			async refreshPing() {
+				try {
+					this.ping = await fetch(`/api/ping?host=${encodeURIComponent(this.host)}&port=${this.port}`).then(r => r.json());
+				} catch (e) {
+					this.ping = { online: false };
+				}
+			},
+			async loadPingHistory() {
+				try {
+					const hist = await fetch('/api/ping-history').then(r => r.json());
+					this.trafficData = (hist.samples || []).slice(-1440);
+					this.renderChart();
+				} catch {}
+			},
+			renderChart() {
+				const ctx = document.getElementById('trafficChart');
+				const labels = this.trafficData.map(s => new Date(s.at).toLocaleTimeString());
+				const values = this.trafficData.map(s => s.online ? s.playersOnline : 0);
+				if (!this.trafficChart) {
+					this.trafficChart = new Chart(ctx, {
+						type: 'line',
+						data: { labels, datasets: [{ label: 'Joueurs', data: values, borderColor: '#34d399', tension: 0.2 }] },
+						options: { scales: { x: { display: false } }, plugins: { legend: { labels: { color: '#e5e7eb' } } } }
+					});
+				} else {
+					this.trafficChart.data.labels = labels;
+					this.trafficChart.data.datasets[0].data = values;
+					this.trafficChart.update();
+				}
+			},
+			formatPlaytime(sec) {
+				const h = Math.floor(sec / 3600);
+				const m = Math.floor((sec % 3600) / 60);
+				const s = Math.floor(sec % 60);
+				return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+			},
+			formatDistance(meters) {
+				const km = (meters / 1000).toFixed(2);
+				return `${km} km`;
+			},
+			formatDate(iso) {
+				try { return new Date(iso).toLocaleString(); } catch { return '-'; }
+			},
+			kdRatio(p) {
+				if (!p) return '-';
+				const k = p.kills || 0; const d = p.deaths || 0;
+				return d === 0 ? (k > 0 ? '∞' : '0') : (k / d).toFixed(2);
+			},
+			filteredPlayers() {
+				const q = (this.playerQuery || '').toLowerCase();
+				const arr = Object.entries(this.players || {});
+				const filtered = q ? arr.filter(([name]) => name.toLowerCase().includes(q)) : arr;
+				return filtered.sort((a,b) => (b[1]?.playtimeSeconds||0) - (a[1]?.playtimeSeconds||0)).slice(0, 100);
+			},
+			selectPlayer(name) {
+				this.selectedPlayerName = name;
+				this.selectedPlayer = this.players?.[name] || null;
+			},
+			async refreshLeaderboards() {
+				try {
+					const stats = await fetch('/api/stats').then(r => r.json());
+					this.players = stats.players || {};
+					const entries = Object.entries(this.players);
+					const fmt = s => this.formatPlaytime(s);
+					const topPlaytime = entries
+						.map(([name, s]) => [name, s.playtimeSeconds || 0])
+						.sort((a,b) => b[1]-a[1]).slice(0,10)
+						.map(([name, sec], i) => `<li>${i+1}. <span class=\"font-semibold\">${name}</span> — ${fmt(sec)}</li>`)
+						.join('');
+					const topKills = entries
+						.map(([name, s]) => [name, s.kills || 0])
+						.sort((a,b) => b[1]-a[1]).slice(0,10)
+						.map(([name, v], i) => `<li>${i+1}. <span class=\"font-semibold\">${name}</span> — ${v}</li>`)
+						.join('');
+					const topMined = entries
+						.map(([name, s]) => [name, s.blocksMined || 0])
+						.sort((a,b) => b[1]-a[1]).slice(0,10)
+						.map(([name, v], i) => `<li>${i+1}. <span class=\"font-semibold\">${name}</span> — ${v}</li>`)
+						.join('');
+					this.leaderboards.playtime = topPlaytime;
+					this.leaderboards.kills = topKills;
+					this.leaderboards.mined = topMined;
+					return true;
+				} catch { return false; }
+			},
+			async importStats(e) {
+				const file = this.$refs.fileInput.files?.[0];
+				if (!file) return;
+				const form = new FormData();
+				form.append('file', file);
+				try {
+					await fetch('/api/import', { method: 'POST', body: form });
+					await this.refreshLeaderboards();
+					alert('Import réussi');
+				} catch {
+					alert('Échec de l\'import');
+				}
+			}
+		}
+	}
+	</script>
+</body>
+</html>

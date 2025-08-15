@@ -1,0 +1,5 @@
+{
+  "host": "localhost",
+  "port": 25565,
+  "pingIntervalSec": 0
+}
